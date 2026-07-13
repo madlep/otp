@@ -34,6 +34,22 @@ erts_ihash_t erts_internal_salted_hash(Eterm term, erts_ihash_t salt);
 erts_ihash_t erts_internal_hash(Eterm term);
 erts_ihash_t erts_map_hash(Eterm term);
 
+/* Cost-reporting variants of the above: *cost_p (if non-NULL) is set to the
+ * amount of work performed while hashing, in "ihash ticks" (roughly one tick
+ * per list cell / tuple header / map entry / 8 bytes of binary data visited;
+ * 0 for terms that hit the immediate fast path). Callers holding a Process*
+ * should charge this via erts_ihash_bump_reds() so that hashing large
+ * binaries/deeply nested terms doesn't run for a long time without the
+ * scheduler getting a chance to preempt the process. */
+erts_ihash_t erts_internal_salted_hash_cost(Eterm term, erts_ihash_t salt, Uint *cost_p);
+erts_ihash_t erts_internal_hash_cost(Eterm term, Uint *cost_p);
+erts_ihash_t erts_map_hash_cost(Eterm term, Uint *cost_p);
+
+#define ERTS_IHASH_TICKS_PER_RED 64
+
+struct process;
+void erts_ihash_bump_reds(struct process *p, Uint cost);
+
 #ifdef DEBUG
 #  define DBG_HASHMAP_COLLISION_BONANZA
 #endif

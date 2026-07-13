@@ -336,9 +336,12 @@ void BeamGlobalAssembler::emit_i_get_map_element_shared() {
     {
         emit_enter_runtime_frame();
 
-        emit_enter_runtime();
-        runtime_call<Eterm (*)(Eterm, Eterm), get_map_element>();
-        emit_leave_runtime();
+        emit_enter_runtime<Update::eReductions>();
+        a.mov(ARG3, ARG2);
+        a.mov(ARG2, ARG1);
+        a.mov(ARG1, c_p);
+        runtime_call<Eterm (*)(Process *, Eterm, Eterm), get_map_element>();
+        emit_leave_runtime<Update::eReductions>();
 
         a.cmp(ARG1, imm(THE_NON_VALUE));
 
@@ -372,9 +375,12 @@ void BeamModuleAssembler::emit_i_get_map_element(const ArgLabel &Fail,
         fragment_call(ga->get_i_get_map_element_shared());
         a.b_ne(resolve_beam_label(Fail, disp1MB));
     } else {
-        emit_enter_runtime();
-        runtime_call<Eterm (*)(Eterm, Eterm), get_map_element>();
-        emit_leave_runtime();
+        emit_enter_runtime<Update::eReductions>();
+        a.mov(ARG3, ARG2);
+        a.mov(ARG2, ARG1);
+        a.mov(ARG1, c_p);
+        runtime_call<Eterm (*)(Process *, Eterm, Eterm), get_map_element>();
+        emit_leave_runtime<Update::eReductions>();
 
         emit_branch_if_not_value(ARG1, resolve_beam_label(Fail, dispUnknown));
     }
@@ -562,12 +568,12 @@ void BeamGlobalAssembler::emit_update_map_assoc_shared() {
  */
 void BeamGlobalAssembler::emit_update_map_single_assoc_shared() {
     emit_enter_runtime_frame();
-    emit_enter_runtime<Update::eHeapAlloc>();
+    emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
     runtime_call<Eterm (*)(Process *, Eterm, Eterm, Eterm), erts_maps_put>();
 
-    emit_leave_runtime<Update::eHeapAlloc>();
+    emit_leave_runtime<Update::eReductions | Update::eHeapAlloc>();
     emit_leave_runtime_frame();
 
     a.ret(a64::x30);
@@ -658,14 +664,14 @@ void BeamGlobalAssembler::emit_update_map_single_exact_body_shared() {
     a.str(ARG2, TMP_MEM2q);
 
     emit_enter_runtime_frame();
-    emit_enter_runtime<Update::eHeapAlloc>();
+    emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
     lea(ARG5, TMP_MEM1q);
     runtime_call<int (*)(Process *, Eterm, Eterm, Eterm, Eterm *),
                  erts_maps_update>();
 
-    emit_leave_runtime<Update::eHeapAlloc>();
+    emit_leave_runtime<Update::eReductions | Update::eHeapAlloc>();
     emit_leave_runtime_frame();
 
     a.cbz(ARG1.w(), error);

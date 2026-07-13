@@ -79,6 +79,7 @@
          t_hashmap_balance/1,
          t_erts_internal_order/1,
          t_erts_internal_hash/1,
+         t_reds_large_key_hash/1,
          t_pdict/1,
          t_ets/1,
          t_dets/1,
@@ -163,6 +164,7 @@ groups() ->
        t_hashmap_balance,
        t_erts_internal_order,
        t_erts_internal_hash,
+       t_reds_large_key_hash,
        t_pdict,
        t_ets,
        t_tracing,
@@ -3224,6 +3226,114 @@ t_erts_internal_hash(_Config) when is_list(_Config) ->
 		   1),
 
     ok.
+
+t_reds_large_key_hash(Config) when is_list(Config) ->
+    %% big is much larger than small. We're not testing exact reduction counts
+    %% here, just checking for regressions where reduction count doesn't get
+    %% increased as expected. We want the size difference to be different
+    %% enough that tests aren't flakey.
+    Small = <<1,2,3,4>>,
+    Big = binary:copy(<<1,2,3,4,5,6,7,8>>, 1000000), %% 8mb
+
+    %% Force a hashmap (not a flatmap), so that keys are actually hashed
+    %% instead of linearly compared based on equality
+    Base = maps:from_list([{K,v} || K <- lists:seq(1, 40)]),
+    hashmap = erts_internal:term_type(Base),
+
+    SmallMap = Base#{Small => v},
+    BigMap = Base#{Big => v},
+
+    %% check reduction count bump scales with hashkey work required for each
+    %% operation that will end up computing a hashcode for a key. Not just map
+    %% specific functions, but anything that hashes a key and could tie up a
+    %% scheduler if reductions aren't bumped.
+    check_reds("maps:get/2",
+               fun() -> maps:get(Small, SmallMap) end,
+               fun() -> maps:get(Big, BigMap) end),
+
+    check_reds("maps:find/2",
+               fun() -> maps:find(Small, SmallMap) end,
+               fun() -> maps:find(Big, BigMap) end),
+
+    check_reds("#{M => K=>V}",
+               fun() -> Base#{Small => v2} end,
+               fun() -> Base#{Big => v2} end),
+
+    check_reds("maps:put/3",
+               fun() -> maps:put(Small, v2, Base) end,
+               fun() -> maps:put(Big, v2, Base) end),
+
+    check_reds("#{M := K=>V}",
+               fun() -> SmallMap#{Small := v2} end,
+               fun() -> BigMap#{Big := v2} end),
+
+    check_reds("maps:update/3",
+               fun() -> maps:update(Small, v2, SmallMap) end,
+               fun() -> maps:update(Big, v2, BigMap) end),
+
+    check_reds("maps:remove/2",
+               fun() -> maps:remove(Small, SmallMap) end,
+               fun() -> maps:remove(Big, BigMap) end),
+
+    check_reds("maps:merge/2",
+               fun() -> maps:merge(Base, #{Small => v2}) end,
+               fun() -> maps:merge(Base, #{Big => v2}) end),
+
+    Tid = ets:new(reds_large_key_hash, []),
+    check_reds("ets:insert/2",
+               fun() -> ets:insert(Tid, {Small, v}) end,
+               fun() -> ets:insert(Tid, {Big, v}) end),
+    check_reds("ets:lookup/2",
+               fun() -> ets:lookup(Tid, Small) end,
+               fun() -> ets:lookup(Tid, Big) end),
+    ets:delete(Tid),
+
+    check_reds("put/2 (process dictionary)",
+               fun() -> put(Small, v) end,
+               fun() -> put(Big, v) end),
+    check_reds("get/1 (process dictionary)",
+               fun() -> get(Small) end,
+               fun() -> get(Big) end),
+    erase(Small),
+    erase(Big),
+
+    check_reds("persistent_term:put/2 (new key)",
+               fun() -> persistent_term:put(Small, v) end,
+               fun() -> persistent_term:put(Big, v) end),
+
+    check_reds("persistent_term:get/1",
+               fun() -> persistent_term:get(Small) end,
+               fun() -> persistent_term:get(Big) end),
+
+    check_reds("persistent_term:put/2 (existing key)",
+               fun() -> persistent_term:put(Small, v2) end,
+               fun() -> persistent_term:put(Big, v2) end),
+
+    check_reds("persistent_term:erase/1",
+               fun() -> persistent_term:erase(Small) end,
+               fun() -> persistent_term:erase(Big) end),
+
+    ok.
+
+check_reds(Label, SmallFun, BigFun) ->
+    erlang:yield(),
+    {reductions, R0} = process_info(self(), reductions),
+    _ = SmallFun(),
+    {reductions, R1} = process_info(self(), reductions),
+    SmallReds = R1 - R0,
+
+    erlang:yield(),
+    {reductions, R2} = process_info(self(), reductions),
+    _ = BigFun(),
+    {reductions, R3} = process_info(self(), reductions),
+    BigReds = R3 - R2,
+
+    MinExtra = 1000,
+    if
+        BigReds >= SmallReds + MinExtra -> ok;
+        true -> ct:fail("~s: small key reductions = ~p, big key reductions =
+                        ~p~n", [Label, SmallReds, BigReds])
+    end.
 
 t_pdict(_Config) ->
 

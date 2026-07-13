@@ -63,8 +63,25 @@
 
 #define PD_SZ2BYTES(Sz) (sizeof(ProcDict) + ((Sz) - 1)*sizeof(Eterm))
 
+static ERTS_INLINE erts_ihash_t pd_make_hash(Process *p, Eterm term)
+{
+    if (is_small(term)) {
+        return (erts_ihash_t) unsigned_val(term);
+    } else if (is_atom(term)) {
+        return (erts_ihash_t) atom_val(term);
+    } else {
+        Uint cost;
+        erts_ihash_t hx = erts_internal_hash_cost(term, &cost);
+        erts_ihash_bump_reds(p, cost);
+        return hx;
+    }
+}
+
 #define pd_hash_value(Pdict, Key) \
     pd_hash_value_to_ix(Pdict, MAKE_HASH((Key)))
+
+#define pd_hash_value_p(P, Pdict, Key) \
+    pd_hash_value_to_ix(Pdict, pd_make_hash((P), (Key)))
 
 /* Memory allocation macros */
 #define PD_ALLOC(Sz)				\
@@ -393,7 +410,7 @@ static void pd_hash_erase(Process *p, Eterm id, Eterm *ret)
     if (p->dictionary == NULL) {
 	return;
     }
-    hval = pd_hash_value(p->dictionary, id);
+    hval = pd_hash_value_p(p, p->dictionary, id);
     old = ARRAY_GET(p->dictionary, hval);
     if (is_boxed(old)) {	/* Tuple */
 	ASSERT(is_tuple(old));
@@ -467,7 +484,7 @@ Eterm erts_pd_hash_get(Process *p, Eterm id)
 
     if (pd == NULL)
 	return am_undefined;
-    hval = pd_hash_value(pd, id);
+    hval = pd_hash_value_p(p, pd, id);
     return pd_hash_get_with_hval(p, ARRAY_GET(pd, hval), id);
 }
 
@@ -649,7 +666,7 @@ static Eterm pd_hash_put(Process *p, Eterm id, Eterm value)
         p->dictionary->splitPosition = 0;
         p->dictionary->numElements = 0;
     }	
-    hval = pd_hash_value(p->dictionary, id);
+    hval = pd_hash_value_p(p, p->dictionary, id);
     bucket = ARRAY_GET_PTR(p->dictionary, hval);
     old = *bucket;
 

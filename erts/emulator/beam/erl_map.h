@@ -76,6 +76,7 @@ typedef struct flatmap_s {
 
 #define hashmap_size(x)               (((hashmap_head_t*) hashmap_val(x))->size)
 #define hashmap_make_hash(Key)        erts_map_hash(Key)
+#define hashmap_make_hash_cost(Key, CostP) erts_map_hash_cost(Key, CostP)
 
 #define hashmap_restore_hash(Lvl, Key)                                        \
     (ASSERT(Lvl < HAMT_MAX_LEVEL),                                            \
@@ -129,6 +130,7 @@ Eterm  erts_hashmap_from_ks_and_vs_extra(ErtsHeapFactory *factory,
                                          int reject_dupkeys);
 
 const Eterm *erts_maps_get(Eterm key, Eterm map);
+const Eterm *erts_maps_get_p(Process *p, Eterm key, Eterm map);
 
 const Eterm *erts_hashmap_get(erts_ihash_t hx, Eterm key, Eterm map);
 

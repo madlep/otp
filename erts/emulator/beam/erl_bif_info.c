@@ -4840,8 +4840,10 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 		BIF_RET(erts_debug_reader_groups_map(BIF_P, (int) groups));
 	    }
 	    else if (ERTS_IS_ATOM_STR("internal_hash", tp[1])) {
-		Uint hash = (Uint) erts_internal_hash(tp[2]);
+		Uint cost;
+		Uint hash = (Uint) erts_internal_hash_cost(tp[2], &cost);
 		Uint hsz = 0;
+		erts_ihash_bump_reds(BIF_P, cost);
 		Eterm* hp;
 		erts_bld_uint(NULL, &hsz, hash);
 		hp = HAlloc(BIF_P,hsz);

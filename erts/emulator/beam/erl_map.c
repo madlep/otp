@@ -222,12 +222,29 @@ erts_maps_get(Eterm key, Eterm map)
     return erts_hashmap_get(hx, key, map);
 }
 
+const Eterm *
+erts_maps_get_p(Process *p, Eterm key, Eterm map)
+{
+    erts_ihash_t hx;
+    Uint cost;
+
+    if (is_flatmap(map)) {
+        return erts_maps_get(key, map);
+    }
+
+    ASSERT(is_hashmap(map));
+    hx = hashmap_make_hash_cost(key, &cost);
+    erts_ihash_bump_reds(p, cost);
+
+    return erts_hashmap_get(hx, key, map);
+}
+
 BIF_RETTYPE maps_find_2(BIF_ALIST_2) {
     if (is_map(BIF_ARG_2)) {
         Eterm *hp, res;
         const Eterm *value;
 
-        value = erts_maps_get(BIF_ARG_1, BIF_ARG_2);
+        value = erts_maps_get_p(BIF_P, BIF_ARG_1, BIF_ARG_2);
 	if (value) {
 	    hp    = HAlloc(BIF_P, 3);
 	    res   = make_tuple(hp);
@@ -251,7 +268,7 @@ BIF_RETTYPE maps_get_2(BIF_ALIST_2) {
     if (is_map(BIF_ARG_2)) {
         const Eterm *value;
 
-        value = erts_maps_get(BIF_ARG_1, BIF_ARG_2);
+        value = erts_maps_get_p(BIF_P, BIF_ARG_1, BIF_ARG_2);
         if (value) {
             BIF_RET(*value);
 	}
@@ -1400,13 +1417,19 @@ static Eterm flatmap_merge(Process *p, Eterm map1, Eterm map2) {
 
 	hxns = (hxnode_t *)erts_alloc(ERTS_ALC_T_TMP,n * sizeof(hxnode_t));
 
-	for (i = 0; i < n; i++) {
-	    hx = hashmap_make_hash(ks[i]);
-	    sw = swizzle_map_hash(hx);
-	    hxns[i].hx   = sw;
-	    hxns[i].val  = CONS(hp, ks[i], vs[i]); hp += 2;
-	    hxns[i].skip = 1;
-	    hxns[i].i    = i;
+	{
+	    Uint total_cost = 0;
+	    for (i = 0; i < n; i++) {
+	        Uint cost;
+	        hx = hashmap_make_hash_cost(ks[i], &cost);
+	        total_cost += cost;
+	        sw = swizzle_map_hash(hx);
+	        hxns[i].hx   = sw;
+	        hxns[i].val  = CONS(hp, ks[i], vs[i]); hp += 2;
+	        hxns[i].skip = 1;
+	        hxns[i].i    = i;
+	    }
+	    erts_ihash_bump_reds(p, total_cost);
 	}
 
         erts_factory_proc_init(&factory, p);
@@ -1446,13 +1469,19 @@ static Eterm map_merge_mixed(Process *p, Eterm flat, Eterm tree, int swap_args) 
 
     hxns = (hxnode_t *)erts_alloc(ERTS_ALC_T_TMP, n * sizeof(hxnode_t));
 
-    for (i = 0; i < n; i++) {
-	hx = hashmap_make_hash(ks[i]);
-	sw = swizzle_map_hash(hx);
-	hxns[i].hx   = sw;
-	hxns[i].val  = CONS(hp, ks[i], vs[i]); hp += 2;
-	hxns[i].skip = 1;
-	hxns[i].i    = i;
+    {
+        Uint total_cost = 0;
+        for (i = 0; i < n; i++) {
+            Uint cost;
+            hx = hashmap_make_hash_cost(ks[i], &cost);
+            total_cost += cost;
+            sw = swizzle_map_hash(hx);
+            hxns[i].hx   = sw;
+            hxns[i].val  = CONS(hp, ks[i], vs[i]); hp += 2;
+            hxns[i].skip = 1;
+            hxns[i].i    = i;
+        }
+        erts_ihash_bump_reds(p, total_cost);
     }
 
     erts_factory_proc_init(&factory, p);
@@ -2023,7 +2052,11 @@ found_key:
 	return 1;
     }
     ASSERT(is_hashmap(map));
-    hx = hashmap_make_hash(key);
+    {
+        Uint cost;
+        hx = hashmap_make_hash_cost(key, &cost);
+        erts_ihash_bump_reds(p, cost);
+    }
     ret = hashmap_delete(p, hx, key, map, value);
     if (is_value(ret)) {
         *res = ret;
@@ -2094,7 +2127,11 @@ found_key:
     }
 
     ASSERT(is_hashmap(map));
-    hx = hashmap_make_hash(key);
+    {
+        Uint cost;
+        hx = hashmap_make_hash_cost(key, &cost);
+        erts_ihash_bump_reds(p, cost);
+    }
     *res = erts_hashmap_insert(p, hx, key, value, map, 1);
     if (is_value(*res))
 	return 1;
@@ -2229,7 +2266,11 @@ found_key:
     }
     ASSERT(is_hashmap(map));
 
-    hx  = hashmap_make_hash(key);
+    {
+        Uint cost;
+        hx = hashmap_make_hash_cost(key, &cost);
+        erts_ihash_bump_reds(p, cost);
+    }
     res = erts_hashmap_insert(p, hx, key, value, map, 0);
     ASSERT(is_hashmap(res));
 

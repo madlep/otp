@@ -1772,9 +1772,10 @@ is_function2(Eterm Term, Uint arity)
     return 0;
 }
 
-Eterm get_map_element(Eterm map, Eterm key)
+Eterm get_map_element(Process *c_p, Eterm map, Eterm key)
 {
     erts_ihash_t hx;
+    Uint cost;
     const Eterm *vs;
     if (is_flatmap(map)) {
 	flatmap_t *mp;
@@ -1802,7 +1803,8 @@ Eterm get_map_element(Eterm map, Eterm key)
 	return THE_NON_VALUE;
     }
     ASSERT(is_hashmap(map));
-    hx = hashmap_make_hash(key);
+    hx = hashmap_make_hash_cost(key, &cost);
+    erts_ihash_bump_reds(c_p, cost);
     vs = erts_hashmap_get(hx,key,map);
     return vs ? *vs : THE_NON_VALUE;
 }
@@ -1981,20 +1983,24 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
     if (is_not_flatmap(map)) {
 	erts_ihash_t hx;
 	Eterm val;
+	Uint total_cost = 0;
 
 	ASSERT(is_hashmap(map));
 	res = map;
 	E = p->stop;
 	while(num_updates--) {
+	    Uint cost;
 	    /* assoc can't fail */
 	    GET_TERM(new_p[0], new_key);
 	    GET_TERM(new_p[1], val);
-	    hx = hashmap_make_hash(new_key);
+	    hx = hashmap_make_hash_cost(new_key, &cost);
+	    total_cost += cost;
 
 	    res = erts_hashmap_insert(p, hx, new_key, val, res,  0);
 
 	    new_p += 2;
 	}
+	erts_ihash_bump_reds(p, total_cost);
 	return res;
     }
 
@@ -2224,6 +2230,7 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
     if (is_not_flatmap(map)) {
 	erts_ihash_t hx;
 	Eterm val;
+	Uint total_cost = 0;
 
 	/* apparently the compiler does not emit is_map instructions,
 	 * bad compiler */
@@ -2237,12 +2244,15 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
 	res = map;
 	E = p->stop;
 	while(n--) {
+	    Uint cost;
 	    GET_TERM(new_p[0], new_key);
 	    GET_TERM(new_p[1], val);
-	    hx = hashmap_make_hash(new_key);
+	    hx = hashmap_make_hash_cost(new_key, &cost);
+	    total_cost += cost;
 
 	    res = erts_hashmap_insert(p, hx, new_key, val, res,  1);
 	    if (is_non_value(res)) {
+		erts_ihash_bump_reds(p, total_cost);
 		p->fvalue = new_key;
 		p->freason = BADKEY;
 		return res;
@@ -2250,6 +2260,7 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
 
 	    new_p += 2;
 	}
+	erts_ihash_bump_reds(p, total_cost);
 	return res;
     }
 

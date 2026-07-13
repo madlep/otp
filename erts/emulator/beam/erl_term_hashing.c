@@ -1767,7 +1767,7 @@ static Uint64 ihash_mix64(Uint64 input)
 }
 
 static erts_ihash_t
-make_internal_hash(Eterm term, erts_ihash_t salt)
+make_internal_hash(Eterm term, erts_ihash_t salt, Uint *cost_p)
 {
     Uint64 hash_alpha, hash_beta;
     Uint hash_ticks;
@@ -2233,6 +2233,10 @@ make_internal_hash(Eterm term, erts_ihash_t salt)
                 hash_alpha += hash_beta;
                 hash_beta += hash_alpha;
 
+                if (cost_p != NULL) {
+                    *cost_p = hash_ticks;
+                }
+
                 return (erts_ihash_t)(hash_alpha ^ hash_beta);
             }
 
@@ -2289,31 +2293,55 @@ erts_ihash_t erts_dbg_hashmap_collision_bonanza(erts_ihash_t hash, Eterm key)
 }
 #endif
 
-erts_ihash_t erts_internal_salted_hash(Eterm term, erts_ihash_t salt) {
+erts_ihash_t erts_internal_salted_hash_cost(Eterm term, erts_ihash_t salt, Uint *cost_p) {
     if (ERTS_LIKELY(is_immed(term))) {
         /* Fast path for immediates. The vast majority of calls land here. */
+        if (cost_p != NULL) {
+            *cost_p = 0;
+        }
         return ihash_mix64(term + salt);
     }
 
-    return make_internal_hash(term, salt);
+    return make_internal_hash(term, salt, cost_p);
 }
 
-erts_ihash_t erts_internal_hash(Eterm term) {
+erts_ihash_t erts_internal_salted_hash(Eterm term, erts_ihash_t salt) {
+    return erts_internal_salted_hash_cost(term, salt, NULL);
+}
+
+erts_ihash_t erts_internal_hash_cost(Eterm term, Uint *cost_p) {
     if (ERTS_LIKELY(is_immed(term))) {
+        if (cost_p != NULL) {
+            *cost_p = 0;
+        }
         return ihash_mix64(term);
     }
 
-    return make_internal_hash(term, 0);
+    return make_internal_hash(term, 0, cost_p);
+}
+
+erts_ihash_t erts_internal_hash(Eterm term) {
+    return erts_internal_hash_cost(term, NULL);
 }
 
 /* Term hash function for hashmaps, identical to erts_internal_hash except in
  * certain debug configurations that weaken the hash. */
-erts_ihash_t erts_map_hash(Eterm key) {
-    erts_ihash_t hash = erts_internal_hash(key);
+erts_ihash_t erts_map_hash_cost(Eterm key, Uint *cost_p) {
+    erts_ihash_t hash = erts_internal_hash_cost(key, cost_p);
 
 #ifdef DBG_HASHMAP_COLLISION_BONANZA
     hash = erts_dbg_hashmap_collision_bonanza(hash, key);
 #endif
 
     return hash;
+}
+
+erts_ihash_t erts_map_hash(Eterm key) {
+    return erts_map_hash_cost(key, NULL);
+}
+
+void erts_ihash_bump_reds(Process *p, Uint cost) {
+    if (p != NULL && cost != 0) {
+        BUMP_REDS(p, cost / ERTS_IHASH_TICKS_PER_RED);
+    }
 }

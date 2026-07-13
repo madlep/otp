@@ -281,6 +281,30 @@ static ERTS_INLINE bool is_pseudo_deleted(HashDbTerm* p)
     ((is_atom(term) ? (atom_tab(atom_val(term))->slot.bucket.hvalue) : \
       erts_internal_hash(term)) >> 1)
 
+static ERTS_INLINE HashValue db_make_hash_p(Process *p, Eterm term)
+{
+    if (is_atom(term)) {
+        return atom_tab(atom_val(term))->slot.bucket.hvalue >> 1;
+    } else {
+        Uint cost;
+        HashValue hval = erts_internal_hash_cost(term, &cost) >> 1;
+        erts_ihash_bump_reds(p, cost);
+        return hval;
+    }
+}
+
+static ERTS_INLINE HashValue db_make_hash_reds(Eterm term, SWord *consumed_reds_p)
+{
+    if (is_atom(term)) {
+        return atom_tab(atom_val(term))->slot.bucket.hvalue >> 1;
+    } else {
+        Uint cost;
+        HashValue hval = erts_internal_hash_cost(term, &cost) >> 1;
+        *consumed_reds_p += cost / (ERTS_IHASH_TICKS_PER_RED / 8);
+        return hval;
+    }
+}
+
 #  define GET_LOCK_MASK(NUMBER_OF_LOCKS) ((NUMBER_OF_LOCKS)-1)
 
 #  define GET_LOCK(tb,hval) (&(tb)->locks[(hval) & GET_LOCK_MASK(tb->nlocks)].u.lck_ctr.lck)
@@ -1104,7 +1128,7 @@ static ERTS_INLINE Eterm db_copy_key_hash(Process* p, DbTable* tbl, HashDbTerm* 
 
 static ERTS_INLINE Eterm db_copy_key_and_objects_hash(Process* p, DbTable* tbl, HashDbTerm* b) {
     Eterm key = db_copy_key_hash(p, tbl, b);
-    HashValue hval = MAKE_HASH(key);
+    HashValue hval = db_make_hash_p(p, key);
     DbTableHash *tb = &tbl->hash;
     Eterm objects = get_term_list(p, tb, key, hval, b, NULL);
     Eterm *hp, res;
@@ -1152,7 +1176,7 @@ static int db_next_hash_common(Process *p, DbTable *tbl, Eterm key, Eterm *ret, 
     HashDbTerm* b;
     erts_rwmtx_t* lck;
 
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_p(p, key);
     lck = RLOCK_HASH(tb,hval);
     ix = hash_to_ix(tb, hval);
     b = BUCKET(tb, ix);    
@@ -1260,7 +1284,7 @@ static int db_put_dbterm_hash(DbTable* tbl,
     Uint size_to_insert = db_term_size(tbl, value_to_insert, offsetof(HashDbTerm, dbterm));
     ERTS_DB_ALC_MEM_UPDATE_(tbl, 0, size_to_insert);
     key = GETKEY(tb, value_to_insert->dbterm.tpl);
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_reds(key, consumed_reds_p);
     value_to_insert->hvalue = hval;
     lck_ctr = WLOCK_HASH_GET_LCK_AND_CTR(tb, hval);
     ix = hash_to_ix(tb, hval);
@@ -1375,7 +1399,7 @@ int db_put_hash(DbTable *tbl, Eterm obj, bool key_clash_fail,
     int ret = DB_ERROR_NONE;
 
     key = GETKEY(tb, tuple_val(obj));
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_reds(key, consumed_reds_p);
     lck_ctr = WLOCK_HASH_GET_LCK_AND_CTR(tb, hval);
     ix = hash_to_ix(tb, hval);
     bp = &BUCKET(tb, ix);
@@ -1497,7 +1521,7 @@ int db_get_hash(Process *p, DbTable *tbl, Eterm key, Eterm *ret)
     HashDbTerm* b;
     erts_rwmtx_t* lck;
 
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_p(p, key);
     lck = RLOCK_HASH(tb,hval);
     ix = hash_to_ix(tb, hval);
     b = BUCKET(tb, ix);
@@ -1552,8 +1576,8 @@ static int db_get_element_hash(Process *p, DbTable *tbl,
     HashDbTerm* b1;
     erts_rwmtx_t* lck;
     int retval;
-    
-    hval = MAKE_HASH(key);
+
+    hval = db_make_hash_p(p, key);
     lck = RLOCK_HASH(tb, hval);
     ix = hash_to_ix(tb, hval);
     b1 = BUCKET(tb, ix);
@@ -2951,7 +2975,7 @@ static int db_take_hash(Process *p, DbTable *tbl, Eterm key, Eterm *ret)
     DbTableHash *tb = &tbl->hash;
     HashDbTerm **bp, *b;
     HashDbTerm *free_us = NULL;
-    HashValue hval = MAKE_HASH(key);
+    HashValue hval = db_make_hash_p(p, key);
     DbTableHashLockAndCounter *lck_ctr = WLOCK_HASH_GET_LCK_AND_CTR(tb, hval);
     UWord ix = hash_to_ix(tb, hval);
     int nitems_diff = 0;
@@ -3880,7 +3904,7 @@ db_lookup_dbterm_hash(Process *p, DbTable *tbl, Eterm key, Eterm obj,
 
     ASSERT(tb->common.status & DB_SET);
 
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_p(p, key);
     lck_ctr = WLOCK_HASH_GET_LCK_AND_CTR(tb, hval);
     bp = &BUCKET(tb, hash_to_ix(tb, hval));
     b = *bp;
@@ -4125,7 +4149,7 @@ static int db_get_binary_info_hash(Process *p, DbTable *tbl, Eterm key, Eterm *r
     Uint hsz;
     Eterm list;
 
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_p(p, key);
     lck = RLOCK_HASH(tb,hval);
     ix = hash_to_ix(tb, hval);
     b = BUCKET(tb, ix);
@@ -4201,7 +4225,7 @@ static int db_raw_next_hash(Process *p, DbTable *tbl, Eterm key, Eterm *ret)
     HashDbTerm* b;
     erts_rwmtx_t* lck;
 
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_p(p, key);
     lck = RLOCK_HASH(tb,hval);
     ix = hash_to_ix(tb, hval);
     b = BUCKET(tb, ix);

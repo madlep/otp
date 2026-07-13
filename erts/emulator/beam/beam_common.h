@@ -267,7 +267,7 @@ Eterm erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
                                Uint n, const Eterm* data);
 Eterm erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
                                Uint n, const Eterm* data);
-Eterm get_map_element(Eterm map, Eterm key);
+Eterm get_map_element(Process *c_p, Eterm map, Eterm key);
 Eterm get_map_element_hash(Eterm map, Eterm key, erts_ihash_t hx);
 int raw_raise(Eterm stacktrace, Eterm exc_class, Eterm value, Process *c_p);
 void erts_sanitize_freason(Process* c_p, Eterm exc);

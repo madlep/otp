@@ -420,12 +420,12 @@ void BeamModuleAssembler::emit_i_get(const ArgSource &Src,
                                      const ArgRegister &Dst) {
     mov_arg(ARG2, Src);
 
-    emit_enter_runtime();
+    emit_enter_runtime<Update::eReductions>();
 
     a.mov(ARG1, c_p);
     runtime_call<Eterm (*)(Process *, Eterm), erts_pd_hash_get>();
 
-    emit_leave_runtime();
+    emit_leave_runtime<Update::eReductions>();
 
     mov_arg(Dst, RET);
 }

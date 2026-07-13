@@ -150,7 +150,7 @@ typedef struct {
 
 static Eterm put_common(Process* process, Eterm key, Eterm term, Eterm new);
 static HashTable* create_initial_table(void);
-static Uint lookup(HashTable* hash_table, Eterm key, Eterm *bucket);
+static Uint lookup(Process* p, HashTable* hash_table, Eterm key, Eterm *bucket);
 static int is_erasable(HashTable* hash_table, Uint idx);
 static HashTable* copy_table(ErtsPersistentTermCpyTableCtx* ctx);
 static int try_seize_update_permission(Process* c_p);
@@ -356,12 +356,12 @@ BIF_RETTYPE persistent_term_get_0(BIF_ALIST_0)
 }
 
 static ERTS_INLINE Eterm
-persistent_term_get(Eterm key)
+persistent_term_get_p(Process* p, Eterm key)
 {
     HashTable* hash_table = (HashTable *) erts_atomic_read_nob(&the_hash_table);
     Eterm bucket;
 
-    (void)lookup(hash_table, key, &bucket);
+    (void)lookup(p, hash_table, key, &bucket);
 
     if (is_boxed(bucket)) {
         ASSERT(is_tuple_arity(bucket, 2));
@@ -369,6 +369,12 @@ persistent_term_get(Eterm key)
     }
 
     return THE_NON_VALUE;
+}
+
+static ERTS_INLINE Eterm
+persistent_term_get(Eterm key)
+{
+    return persistent_term_get_p(NULL, key);
 }
 
 Eterm
@@ -379,7 +385,7 @@ erts_persistent_term_get(Eterm key)
 
 BIF_RETTYPE persistent_term_get_1(BIF_ALIST_1)
 {
-    Eterm result = persistent_term_get(BIF_ARG_1);
+    Eterm result = persistent_term_get_p(BIF_P, BIF_ARG_1);
     if (is_non_value(result)) {
         BIF_ERROR(BIF_P, BADARG);
     }
@@ -389,7 +395,7 @@ BIF_RETTYPE persistent_term_get_1(BIF_ALIST_1)
 
 BIF_RETTYPE persistent_term_get_2(BIF_ALIST_2)
 {
-    Eterm result = persistent_term_get(BIF_ARG_1);
+    Eterm result = persistent_term_get_p(BIF_P, BIF_ARG_1);
     if (is_non_value(result)) {
         result = BIF_ARG_2;
     }
@@ -471,7 +477,7 @@ BIF_RETTYPE persistent_term_erase_1(BIF_ALIST_1)
 
     ctx->key = BIF_ARG_1;
     ctx->old_table = (HashTable *) erts_atomic_read_nob(&the_hash_table);
-    ctx->entry_index = lookup(ctx->old_table, ctx->key, &ctx->old_bucket);
+    ctx->entry_index = lookup(BIF_P, ctx->old_table, ctx->key, &ctx->old_bucket);
 
     if (is_boxed(ctx->old_bucket)) {
         ctx->must_shrink = MUST_SHRINK(ctx->old_table);
@@ -697,7 +703,7 @@ static Eterm put_common(Process* c_p, Eterm key, Eterm term, Eterm new)
     ctx->key = key;
     ctx->term = term;
 
-    ctx->entry_index = lookup(ctx->hash_table, ctx->key, &old_bucket);
+    ctx->entry_index = lookup(c_p, ctx->hash_table, ctx->key, &old_bucket);
 
     ctx->heap[0] = make_arityval(2);
     ctx->heap[1] = ctx->key;
@@ -712,7 +718,7 @@ static Eterm put_common(Process* c_p, Eterm key, Eterm term, Eterm new)
                                            new_size,
                                            ERTS_PERSISTENT_TERM_CPY_NO_REHASH,
                                            PUT_COMMON_TRAP_LOCATION_NEW_KEY);
-            ctx->entry_index = lookup(ctx->hash_table,
+            ctx->entry_index = lookup(c_p, ctx->hash_table,
                                       ctx->key,
                                       &old_bucket);
         }
@@ -1003,11 +1009,14 @@ cleanup_trap_data(Binary *bp)
 }
 
 static Uint
-lookup(HashTable* hash_table, Eterm key, Eterm *bucket)
+lookup(Process* p, HashTable* hash_table, Eterm key, Eterm *bucket)
 {
-    erts_ihash_t idx = erts_internal_hash(key);
+    Uint cost;
+    erts_ihash_t idx = erts_internal_hash_cost(key, &cost);
     Uint mask = hash_table->mask;
     Eterm term;
+
+    erts_ihash_bump_reds(p, cost);
 
     while (1) {
         term = get_bucket(hash_table, idx & mask);
@@ -1109,7 +1118,7 @@ copy_table(ErtsPersistentTermCpyTableCtx* ctx)
                 Uint entry_index;
 
                 key = tuple_val(old_bucket)[1];
-                entry_index = lookup(ctx->new_table, key, &assert_empty_bucket);
+                entry_index = lookup(NULL, ctx->new_table, key, &assert_empty_bucket);
 
                 ASSERT(is_nil(assert_empty_bucket));
                 (void)assert_empty_bucket;
