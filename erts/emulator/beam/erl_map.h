@@ -78,9 +78,9 @@ typedef struct flatmap_s {
 #define hashmap_make_hash(Key)        erts_map_hash(Key)
 #define hashmap_make_hash_cost(Key, CostP) erts_map_hash_cost(Key, CostP)
 
-#define hashmap_restore_hash(Lvl, Key)                                        \
+#define hashmap_restore_hash_cost(Lvl, Key, CostP)                            \
     (ASSERT(Lvl < HAMT_MAX_LEVEL),                                            \
-     hashmap_make_hash(Key) >> (4*(Lvl)))
+     hashmap_make_hash_cost(Key, CostP) >> (4*(Lvl)))
 
 #define hashmap_shift_hash(Hx, Lvl, Key)                                      \
     (++(Lvl), ASSERT(Lvl <= HAMT_MAX_LEVEL), /* we allow one level too much */\
@@ -108,7 +108,8 @@ int    erts_maps_take(Process *p, Eterm key, Eterm map, Eterm *res, Eterm *value
 Eterm  erts_hashmap_insert(Process *p, erts_ihash_t hx, Eterm key, Eterm value,
 			   Eterm node, int is_update);
 int    erts_hashmap_insert_down(erts_ihash_t hx, Eterm key, Eterm value, Eterm node, Uint *sz,
-			        Uint *upsz, struct ErtsEStack_ *sp, int is_update);
+			        Uint *upsz, struct ErtsEStack_ *sp, int is_update,
+			        Uint *hash_cost);
 Eterm  erts_hashmap_insert_up(Eterm *hp, Eterm key, Eterm value,
 			      Uint upsz, struct ErtsEStack_ *sp);
 
@@ -118,16 +119,17 @@ void   hashmap_iterator_init(struct ErtsWStack_* s, Eterm node, int reverse);
 Eterm* hashmap_iterator_next(struct ErtsWStack_* s);
 Eterm* hashmap_iterator_prev(struct ErtsWStack_* s);
 int    hashmap_key_hash_cmp(Eterm* ap, Eterm* bp);
-Eterm  erts_hashmap_from_array(ErtsHeapFactory*, Eterm *leafs, Uint n, int reject_dupkeys);
+Eterm  erts_hashmap_from_array(ErtsHeapFactory*, Eterm *leafs, Uint n,
+                               int reject_dupkeys, Uint *cost_out);
 
-#define erts_hashmap_from_ks_and_vs(F, KS, VS, N) \
-    erts_hashmap_from_ks_and_vs_extra((F), (KS), (VS), (N), THE_NON_VALUE, THE_NON_VALUE, 0);
+#define erts_hashmap_from_ks_and_vs(F, KS, VS, N, COST_OUT) \
+    erts_hashmap_from_ks_and_vs_extra((F), (KS), (VS), (N), THE_NON_VALUE, THE_NON_VALUE, 0, (COST_OUT));
 
 Eterm erts_map_from_ks_and_vs(ErtsHeapFactory *factory, Eterm *ks, Eterm *vs, Uint n);
 Eterm  erts_hashmap_from_ks_and_vs_extra(ErtsHeapFactory *factory,
                                          Eterm *ks, Eterm *vs, Uint n,
                                          Eterm k, Eterm v,
-                                         int reject_dupkeys);
+                                         int reject_dupkeys, Uint *cost_out);
 
 const Eterm *erts_maps_get(Eterm key, Eterm map);
 const Eterm *erts_maps_get_p(Process *p, Eterm key, Eterm map);

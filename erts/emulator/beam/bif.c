@@ -5329,6 +5329,7 @@ BIF_RETTYPE phash_2(BIF_ALIST_2)
     Uint32 hash;
     Uint32 final_hash;
     Uint32 range;
+    Uint cost;
 
     /* Check for special case 2^32 */
     if (term_equals_2pow32(BIF_ARG_2)) {
@@ -5340,7 +5341,8 @@ BIF_RETTYPE phash_2(BIF_ALIST_2)
 	}
 	range = (Uint32) u;
     }
-    hash = make_hash(BIF_ARG_1);
+    hash = make_hash_cost(BIF_ARG_1, &cost);
+    erts_ihash_bump_reds(BIF_P, cost);
     if (range) {
 	final_hash = 1 + (hash % range); /* [1..range] */
     } else if ((final_hash = hash + 1) == 0) {

@@ -672,7 +672,7 @@ static Eterm build_term_list(Process* p, HashDbTerm* ptr1, HashDbTerm* ptr2,
 			   Uint sz, DbTableHash*);
 static Eterm get_term_list(Process *p, DbTableHash *tb, Eterm key, HashValue hval,
               HashDbTerm *b1, HashDbTerm **bend);
-static int analyze_pattern(DbTableHash *tb, Eterm pattern,
+static int analyze_pattern(Process *p, DbTableHash *tb, Eterm pattern,
                            ExtraMatchValidatorF*, /* Optional callback */
                            struct mp_info *mpi);
 
@@ -697,12 +697,14 @@ static int db_next_lookup_hash(Process *p,
 			Eterm key,
 			Eterm *ret);
 
-static int db_member_hash(DbTable *tbl, Eterm key, Eterm *ret);
+static int db_member_hash(DbTable *tbl, Eterm key, Eterm *ret,
+			  SWord *consumed_reds_p);
 
-static int db_get_element_hash(Process *p, DbTable *tbl, 
+static int db_get_element_hash(Process *p, DbTable *tbl,
 			       Eterm key, int pos, Eterm *ret);
 
-static int db_erase_object_hash(DbTable *tbl, Eterm object,Eterm *ret);
+static int db_erase_object_hash(Process *p, DbTable *tbl, Eterm object,
+				Eterm *ret);
 
 static int db_slot_hash(Process *p, DbTable *tbl, 
 			Eterm slot_term, Eterm *ret);
@@ -1539,7 +1541,8 @@ done:
     return DB_ERROR_NONE;
 }
     
-static int db_member_hash(DbTable *tbl, Eterm key, Eterm *ret)
+static int db_member_hash(DbTable *tbl, Eterm key, Eterm *ret,
+                          SWord *consumed_reds_p)
 {
     DbTableHash *tb = &tbl->hash;
     HashValue hval;
@@ -1547,7 +1550,7 @@ static int db_member_hash(DbTable *tbl, Eterm key, Eterm *ret)
     HashDbTerm* b1;
     erts_rwmtx_t* lck;
 
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_reds(key, consumed_reds_p);
     lck = RLOCK_HASH(tb, hval);
     ix = hash_to_ix(tb, hval);
     b1 = BUCKET(tb, ix);
@@ -1634,7 +1637,7 @@ done:
 /*
 ** NB, this is for the db_erase/2 bif.
 */
-int db_erase_hash(DbTable *tbl, Eterm key, Eterm *ret)
+int db_erase_hash(Process *p, DbTable *tbl, Eterm key, Eterm *ret)
 {
     DbTableHash *tb = &tbl->hash;
     HashValue hval;
@@ -1645,7 +1648,7 @@ int db_erase_hash(DbTable *tbl, Eterm key, Eterm *ret)
     DbTableHashLockAndCounter* lck_ctr;
     int nitems_diff = 0;
     Sint nitems;
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_p(p, key);
     lck_ctr = WLOCK_HASH_GET_LCK_AND_CTR(tb,hval);
     ix = hash_to_ix(tb, hval);
     bp = &BUCKET(tb, ix);
@@ -1690,7 +1693,7 @@ int db_erase_hash(DbTable *tbl, Eterm key, Eterm *ret)
 /*
 ** This is for the ets:delete_object BIF
 */
-static int db_erase_object_hash(DbTable *tbl, Eterm object, Eterm *ret)
+static int db_erase_object_hash(Process *p, DbTable *tbl, Eterm object, Eterm *ret)
 {
     DbTableHash *tb = &tbl->hash;
     HashValue hval;
@@ -1705,7 +1708,7 @@ static int db_erase_object_hash(DbTable *tbl, Eterm object, Eterm *ret)
     Eterm key;
 
     key = GETKEY(tb, tuple_val(object));
-    hval = MAKE_HASH(key);
+    hval = db_make_hash_p(p, key);
     lck_ctr = WLOCK_HASH_GET_LCK_AND_CTR(tb,hval);
     ix = hash_to_ix(tb, hval);
     bp = &BUCKET(tb, ix);
@@ -1875,7 +1878,7 @@ static int match_traverse(traverse_context_t* ctx,
     erts_rwmtx_t* lck;         /* Slot lock */
     int ret_value;
 
-    if ((ret_value = analyze_pattern(tb, pattern, ctx->on_match_validation, &mpi))
+    if ((ret_value = analyze_pattern(ctx->p, tb, pattern, ctx->on_match_validation, &mpi))
             != DB_ERROR_NONE)
     {
         *ret = NIL;
@@ -3198,7 +3201,7 @@ static SWord db_free_table_continue_hash(DbTable *tbl, SWord reds)
 ** For the select functions, analyzes the pattern and determines which
 ** slots should be searched. Also compiles the match program
 */
-static int analyze_pattern(DbTableHash *tb, Eterm pattern, 
+static int analyze_pattern(Process *p, DbTableHash *tb, Eterm pattern,
                            ExtraMatchValidatorF* extra_validator, /* Optional callback */
                            struct mp_info *mpi)
 {
@@ -3285,7 +3288,7 @@ static int analyze_pattern(DbTableHash *tb, Eterm pattern,
                     bool search_slot;
 		    HashDbTerm** bp;
 		    erts_rwmtx_t* lck;
-		    hval = MAKE_HASH(key);
+		    hval = db_make_hash_p(p, key);
 		    lck = RLOCK_HASH(tb,hval);
 		    ix = hash_to_ix(tb, hval);
 		    bp = &BUCKET(tb,ix);

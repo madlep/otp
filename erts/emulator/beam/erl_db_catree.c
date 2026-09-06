@@ -121,12 +121,14 @@ static int db_put_catree(DbTable *tbl, Eterm obj, bool key_clash_fail,
                          SWord *consumed_reds_p);
 static int db_get_catree(Process *p, DbTable *tbl,
                          Eterm key,  Eterm *ret);
-static int db_member_catree(DbTable *tbl, Eterm key, Eterm *ret);
+static int db_member_catree(DbTable *tbl, Eterm key, Eterm *ret,
+                            SWord *consumed_reds_p);
 static int db_get_element_catree(Process *p, DbTable *tbl,
                                  Eterm key,int ndex,
                                  Eterm *ret);
-static int db_erase_catree(DbTable *tbl, Eterm key, Eterm *ret);
-static int db_erase_object_catree(DbTable *tbl, Eterm object,Eterm *ret);
+static int db_erase_catree(Process *p, DbTable *tbl, Eterm key, Eterm *ret);
+static int db_erase_object_catree(Process *p, DbTable *tbl, Eterm object,
+                                  Eterm *ret);
 static int db_slot_catree(Process *p, DbTable *tbl,
                           Eterm slot_term,  Eterm *ret);
 static int db_select_catree(Process *p, DbTable *tbl, Eterm tid,
@@ -2026,7 +2028,8 @@ TreeDbTerm** catree_find_last_root(CATreeRootIterator* iter)
     return catree_find_firstlast_root(iter, 0);
 }
 
-static int db_member_catree(DbTable *tbl, Eterm key, Eterm *ret)
+static int db_member_catree(DbTable *tbl, Eterm key, Eterm *ret,
+                            SWord *consumed_reds_p)
 {
     DbTableCATree *tb = &tbl->catree;
     DbTableCATreeNode* node = find_rlock_valid_base_node(tb, key);
@@ -2049,7 +2052,7 @@ static int db_get_element_catree(Process *p, DbTable *tbl,
     return result;
 }
 
-static int db_erase_catree(DbTable *tbl, Eterm key, Eterm *ret)
+static int db_erase_catree(Process *p, DbTable *tbl, Eterm key, Eterm *ret)
 {
     DbTableCATree *tb = &tbl->catree;
     FindBaseNode fbn;
@@ -2060,7 +2063,7 @@ static int db_erase_catree(DbTable *tbl, Eterm key, Eterm *ret)
     return result;
 }
 
-static int db_erase_object_catree(DbTable *tbl, Eterm object, Eterm *ret)
+static int db_erase_object_catree(Process *p, DbTable *tbl, Eterm object, Eterm *ret)
 {
     DbTableCATree *tb = &tbl->catree;
     Eterm key = GETKEY(&tb->common, tuple_val(object));

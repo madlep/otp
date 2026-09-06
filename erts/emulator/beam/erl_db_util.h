@@ -153,13 +153,16 @@ typedef struct db_table_method
 			  Eterm key, 
 			  int index, 
 			  Eterm* ret);
-    int (*db_member)(DbTable* tb, /* [in out] */ 
-		     Eterm key, 
-		     Eterm* ret);
-    int (*db_erase)(DbTable* tb,  /* [in out] */ 
-		    Eterm key, 
+    int (*db_member)(DbTable* tb, /* [in out] */
+		     Eterm key,
+		     Eterm* ret,
+		     SWord *consumed_reds_p);
+    int (*db_erase)(Process* p,
+		    DbTable* tb,  /* [in out] */
+		    Eterm key,
 		    Eterm* ret);
-    int (*db_erase_object)(DbTable* tb, /* [in out] */ 
+    int (*db_erase_object)(Process* p,
+			   DbTable* tb, /* [in out] */
 			   Eterm obj,
 			   Eterm* ret);
     int (*db_slot)(Process* p, 

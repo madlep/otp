@@ -423,12 +423,14 @@ static int db_prev_lookup_tree(Process *p, DbTable *tbl,
 static int db_put_tree(DbTable *tbl, Eterm obj, bool key_clash_fail, SWord *consumed_reds_p);
 static int db_get_tree(Process *p, DbTable *tbl, 
 		       Eterm key,  Eterm *ret);
-static int db_member_tree(DbTable *tbl, Eterm key, Eterm *ret);
-static int db_get_element_tree(Process *p, DbTable *tbl, 
+static int db_member_tree(DbTable *tbl, Eterm key, Eterm *ret,
+			  SWord *consumed_reds_p);
+static int db_get_element_tree(Process *p, DbTable *tbl,
 			       Eterm key,int ndex,
 			       Eterm *ret);
-static int db_erase_tree(DbTable *tbl, Eterm key, Eterm *ret);
-static int db_erase_object_tree(DbTable *tbl, Eterm object,Eterm *ret);
+static int db_erase_tree(Process *p, DbTable *tbl, Eterm key, Eterm *ret);
+static int db_erase_object_tree(Process *p, DbTable *tbl, Eterm object,
+				Eterm *ret);
 static int db_slot_tree(Process *p, DbTable *tbl, 
 			Eterm slot_term,  Eterm *ret);
 static int db_select_tree(Process *p, DbTable *tbl, Eterm tid,
@@ -1056,7 +1058,8 @@ int db_member_tree_common(DbTableCommon *tb, TreeDbTerm *root, Eterm key, Eterm 
     return DB_ERROR_NONE;
 }
 
-static int db_member_tree(DbTable *tbl, Eterm key, Eterm *ret)
+static int db_member_tree(DbTable *tbl, Eterm key, Eterm *ret,
+                          SWord *consumed_reds_p)
 {
     DbTableTree *tb = &tbl->tree;
     return db_member_tree_common(&tb->common, tb->root, key, ret, tb);
@@ -1111,7 +1114,7 @@ int db_erase_tree_common(DbTable *tbl, TreeDbTerm **root, Eterm key, Eterm *ret,
     return DB_ERROR_NONE;
 }
 
-static int db_erase_tree(DbTable *tbl, Eterm key, Eterm *ret)
+static int db_erase_tree(Process *p, DbTable *tbl, Eterm key, Eterm *ret)
 {
     DbTableTree *tb = &tbl->tree;
     return db_erase_tree_common(tbl, &tb->root, key, ret, &tb->static_stack);
@@ -1130,7 +1133,7 @@ int db_erase_object_tree_common(DbTable *tbl, TreeDbTerm **root, Eterm object,
     return DB_ERROR_NONE;
 }
 
-static int db_erase_object_tree(DbTable *tbl, Eterm object, Eterm *ret)
+static int db_erase_object_tree(Process *p, DbTable *tbl, Eterm object, Eterm *ret)
 {
     DbTableTree *tb = &tbl->tree;
     return  db_erase_object_tree_common(tbl, &tb->root, object, ret, tb);

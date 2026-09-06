@@ -2368,7 +2368,7 @@ restart:
             break;
         case matchKey:
             t = (Eterm) *pc++;
-            tp = erts_maps_get(t, make_boxed(ep));
+            tp = erts_maps_get_p(c_p, t, make_boxed(ep));
             if (!tp) {
                 FAIL();
             }
@@ -2510,12 +2510,14 @@ restart:
             {
                 ErtsHeapFactory factory;
                 Uint ix;
+                Uint cost;
                 for (ix = 0; ix < 2*n; ix++){
                     ehp[ix] = esp[ix];
                 }
                 erts_factory_proc_init(&factory, build_proc);
-                t = erts_hashmap_from_array(&factory, ehp, n, 0);
+                t = erts_hashmap_from_array(&factory, ehp, n, 0, &cost);
                 erts_factory_close(&factory);
+                erts_ihash_bump_reds(c_p, cost);
 
                 /* There were duplicate keys in hashmap so we
                    may have to recreate the hashmap as a flatmap */

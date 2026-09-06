@@ -84,6 +84,7 @@ typedef struct {
 Uint32 make_hash2(Eterm);
 Uint32 trapping_make_hash2(Eterm, Eterm*, struct process*);
 Uint32 make_hash(Eterm);
+Uint32 make_hash_cost(Eterm, Uint *cost_p);
 
 void erts_block_hash_init(ErtsBlockHashState *state,
                           const byte *ptr,

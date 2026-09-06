@@ -1837,9 +1837,13 @@ static int ets_insert_new_2_list_has_member(DbTable* tb, Eterm list)
     Eterm lookup_ret;
     DbTableMethod* meth = tb->common.meth;
     for (lst = list; is_list(lst); lst = CDR(list_val(lst))) {
+        LOCAL_VARIABLE(SWord, consumed_reds);
+        consumed_reds = 0;
         meth->db_member(tb,
                         TERM_GETKEY(tb,CAR(list_val(lst))),
-                        &lookup_ret);
+                        &lookup_ret,
+                        &consumed_reds);
+        YCF_CONSUME_REDS(consumed_reds);
         if (lookup_ret != am_false) {
             return 1;
         }
@@ -1919,9 +1923,12 @@ static int ets_insert_new_2_dbterm_list_has_member(DbTable* tb, void* db_term_li
     void* term = NULL;
     Eterm key;
     while (lst != NULL) {
+        LOCAL_VARIABLE(SWord, consumed_reds);
+        consumed_reds = 0;
         term = meth->db_dbterm_list_remove_first(&lst);
         key = meth->db_get_dbterm_key(tb, term);
-        meth->db_member(tb, key, &lookup_ret);
+        meth->db_member(tb, key, &lookup_ret, &consumed_reds);
+        YCF_CONSUME_REDS(consumed_reds);
         if (lookup_ret != am_false) {
             return 1;
         }
@@ -2912,14 +2919,17 @@ BIF_RETTYPE ets_member_2(BIF_ALIST_2)
     DbTable* tb;
     int cret;
     Eterm ret;
+    SWord consumed_reds = 0;
 
     CHECK_TABLES();
 
     DB_BIF_GET_TABLE(tb, DB_READ, LCK_READ, BIF_ets_member_2);
 
-    cret = tb->common.meth->db_member(tb, BIF_ARG_2, &ret);
+    cret = tb->common.meth->db_member(tb, BIF_ARG_2, &ret, &consumed_reds);
 
     db_unlock(tb, LCK_READ);
+
+    BUMP_REDS(BIF_P, consumed_reds / ITERATIONS_PER_RED);
 
     switch (cret) {
     case DB_ERROR_NONE:
@@ -3340,7 +3350,7 @@ BIF_RETTYPE ets_delete_2(BIF_ALIST_2)
 
     DB_BIF_GET_TABLE(tb, DB_WRITE, LCK_WRITE_REC, BIF_ets_delete_2);
 
-    cret = tb->common.meth->db_erase(tb,BIF_ARG_2,&ret);
+    cret = tb->common.meth->db_erase(BIF_P,tb,BIF_ARG_2,&ret);
 
     db_unlock(tb, LCK_WRITE_REC);
 
@@ -3373,7 +3383,7 @@ BIF_RETTYPE ets_delete_object_2(BIF_ALIST_2)
 	BIF_ERROR(BIF_P, BADARG);
     }
 
-    cret = tb->common.meth->db_erase_object(tb, BIF_ARG_2, &ret);
+    cret = tb->common.meth->db_erase_object(BIF_P, tb, BIF_ARG_2, &ret);
     db_unlock(tb, LCK_WRITE_REC);
 
     switch (cret) {

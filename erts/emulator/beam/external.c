@@ -5440,10 +5440,16 @@ dec_term_atom_common:
             struct dec_term_map* map = PSTACK_TOP(map_array);
 
             if (map->objp) {
+                Uint cost;
+                /* factory->p may be NULL here (off-heap/heap-fragment
+                 * message decode, the common distribution-input path), so
+                 * this cost may go uncosted (matches erts_ihash_bump_reds's
+                 * own NULL-guard convention). */
                 *map->objp = erts_hashmap_from_array(factory,
                                                      map->u.leaf_array,
                                                      map->size,
-                                                     1);
+                                                     1, &cost);
+                erts_ihash_bump_reds(factory->p, cost);
                 if (is_non_value(*map->objp))
                     goto error_map_fixup;
             }

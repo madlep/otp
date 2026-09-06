@@ -6118,12 +6118,16 @@ driver_deliver_term(Port *prt, Eterm to, ErlDrvTermData* data, int len)
             if (size > MAP_SMALL_MAP_LIMIT) {
                 int ix = 2*size;
                 Eterm* leafs;
+                Uint cost;
 
 		erts_produce_heap(&factory, ix, HEAP_EXTRA);
 		leafs = factory.hp;
                 while(ix--) { *--leafs = ESTACK_POP(stack); }
 
-                mess = erts_hashmap_from_array(&factory, leafs, size, 1);
+                /* No process is resolved/locked yet at this point in
+                 * driver_deliver_term, so this cost goes uncosted (matches
+                 * erts_ihash_bump_reds's own NULL-guard convention). */
+                mess = erts_hashmap_from_array(&factory, leafs, size, 1, &cost);
                 if (is_non_value(mess))
                     ERTS_DDT_FAIL;
             } else {

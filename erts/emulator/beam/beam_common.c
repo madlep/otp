@@ -1876,6 +1876,7 @@ erts_gc_new_map(Process* p, Eterm* reg, Uint live,
 
     if (n > 2*MAP_SMALL_MAP_LIMIT) {
         Eterm res;
+        Uint cost;
 	if (HeapWordsLeft(p) < n) {
 	    erts_garbage_collect(p, n, reg, live);
 	}
@@ -1892,8 +1893,9 @@ erts_gc_new_map(Process* p, Eterm* reg, Uint live,
 	p->htop = mhp;
 
         erts_factory_proc_init(&factory, p);
-        res = erts_hashmap_from_array(&factory, thp, n/2, 0);
+        res = erts_hashmap_from_array(&factory, thp, n/2, 0, &cost);
         erts_factory_close(&factory);
+        erts_ihash_bump_reds(p, cost);
         return res;
     }
 
@@ -2193,10 +2195,12 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
     /* The expensive case, need to build a hashmap */
     if (n > MAP_SMALL_MAP_LIMIT) {
         ErtsHeapFactory factory;
+        Uint cost;
         erts_factory_proc_init(&factory, p);
         res = erts_hashmap_from_ks_and_vs(&factory,flatmap_get_keys(mp),
-                                          flatmap_get_values(mp),n);
+                                          flatmap_get_values(mp),n,&cost);
         erts_factory_close(&factory);
+        erts_ihash_bump_reds(p, cost);
     }
     return res;
 }

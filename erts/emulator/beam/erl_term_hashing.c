@@ -112,7 +112,7 @@
 #define FUNNY_NUMBER15 268440629
 
 static Uint32
-hash_binary_bytes(Eterm bin, Uint32 hash)
+hash_binary_bytes(Eterm bin, Uint32 hash, Uint *cost_p)
 {
     Uint bitoffs, bitsize, bytesize, i;
     Uint offset, size;
@@ -124,6 +124,8 @@ hash_binary_bytes(Eterm bin, Uint32 hash)
     bytesize = BYTE_SIZE(size);
     bitoffs = BIT_OFFSET(offset);
     bitsize = TAIL_BITS(size);
+
+    *cost_p += bytesize;
 
     if (bitoffs == 0) {
         for (i = 0; i < bytesize; i++) {
@@ -162,11 +164,12 @@ hash_binary_bytes(Eterm bin, Uint32 hash)
     return hash * FUNNY_NUMBER4 + bytesize;
 }
 
-Uint32 make_hash(Eterm term_arg)
+Uint32 make_hash_cost(Eterm term_arg, Uint *cost_p)
 {
     DECLARE_WSTACK(stack);
     Eterm term = term_arg;
     Eterm hash = 0;
+    Uint cost = 0;
     unsigned op;
 
 #define MAKE_HASH_TUPLE_OP      (FIRST_VACANT_TAG_DEF)
@@ -175,11 +178,11 @@ Uint32 make_hash(Eterm term_arg)
 #define MAKE_HASH_CDR_POST_OP   (FIRST_VACANT_TAG_DEF+3)
 #define MAKE_HASH_RECORD_OP     (FIRST_VACANT_TAG_DEF+4)
 
-    /* 
-    ** Convenience macro for calculating a bytewise hash on an unsigned 32 bit 
+    /*
+    ** Convenience macro for calculating a bytewise hash on an unsigned 32 bit
     ** integer.
-    ** If the endianess is known, we could be smarter here, 
-    ** but that gives no significant speedup (on a sparc at least) 
+    ** If the endianess is known, we could be smarter here,
+    ** but that gives no significant speedup (on a sparc at least)
     */
 #define UINT32_HASH_STEP(Expr, Prime1)                                        \
         do {                                                                  \
@@ -189,6 +192,7 @@ Uint32 make_hash(Eterm term_arg)
                 ((x >> 8) & 0xFF)) * (Prime1) +                               \
                 ((x >> 16) & 0xFF)) * (Prime1) +                              \
                  (x >> 24));                                                  \
+            cost += 1;                                                        \
         } while(0)
 
 #define UINT32_HASH_RET(Expr, Prime1, Prime2)                                 \
@@ -232,7 +236,7 @@ tail_recur:
         }
     case BITSTRING_DEF:
         {
-            hash = hash_binary_bytes(term, hash);
+            hash = hash_binary_bytes(term, hash, &cost);
             break;
         }
     case FUN_DEF:
@@ -316,6 +320,7 @@ tail_recur:
                 ** as multiplications on a Sparc is so slow.
                 */
                 hash = hash*FUNNY_NUMBER2 + unsigned_val(*list);
+                cost += 1;
 
                 if (is_not_list(CDR(list))) {
                     WSTACK_PUSH(stack, MAKE_HASH_CDR_POST_OP);
@@ -342,6 +347,8 @@ tail_recur:
             int is_neg = BIG_SIGN(ptr);
             Uint i;
             int j;
+
+            cost += n * sizeof(ErtsDigit);
 
             for (i = 0; i < k; i++)  {
                 d = BIG_DIGIT(ptr, i);
@@ -414,6 +421,9 @@ tail_recur:
       op = WSTACK_POP(stack);
     }
     DESTROY_WSTACK(stack);
+    if (cost_p != NULL) {
+        *cost_p = cost;
+    }
     return hash;
 
 #undef MAKE_HASH_TUPLE_OP
@@ -422,6 +432,11 @@ tail_recur:
 #undef MAKE_HASH_CDR_POST_OP
 #undef UINT32_HASH_STEP
 #undef UINT32_HASH_RET
+}
+
+Uint32 make_hash(Eterm term_arg)
+{
+    return make_hash_cost(term_arg, NULL);
 }
 
 /* Hash function suggested by Bob Jenkins. */

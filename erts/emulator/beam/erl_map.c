@@ -126,6 +126,9 @@ static int hxnodecmpkey(const void* a, const void* b);
  * code that it transforms.
  *
  */
+
+#define MAP_FROM_LIST_ITERATIONS_PER_RED 40
+
 #include "erl_map.ycf.h"
 #define NOT_YCF_YIELDING_VERSION 1
 #define YCF_CONSUME_REDS(X) while(0){}
@@ -509,6 +512,7 @@ static Eterm hashmap_from_validated_list(Process *p,
     erts_ihash_t sw;
     erts_ihash_t hx;
     Uint ix = 0;
+    Uint hash_cost;
     hxnode_t *hxns;
     ErtsHeapFactory *factory;
 #ifdef NOT_YCF_YIELDING_VERSION
@@ -538,7 +542,9 @@ static Eterm hashmap_from_validated_list(Process *p,
 	    key = kv[1];
 	    value = kv[2];
 	}
-	hx  = hashmap_restore_hash(0,key);
+	hx  = hashmap_restore_hash_cost(0, key, &hash_cost);
+	YCF_CONSUME_REDS(hash_cost * MAP_FROM_LIST_ITERATIONS_PER_RED
+	                  / ERTS_IHASH_TICKS_PER_RED);
 	sw = swizzle_map_hash(hx);
 	hxns[ix].hx   = sw;
 	hxns[ix].val  = CONS(hp, key, value); hp += 2;
@@ -659,9 +665,10 @@ BIF_RETTYPE maps_from_keys_2(BIF_ALIST_2) {
 }
 
 Eterm erts_hashmap_from_array(ErtsHeapFactory* factory, Eterm *leafs, Uint n,
-                              int reject_dupkeys) {
+                              int reject_dupkeys, Uint *cost_out) {
     erts_ihash_t sw, hx;
     Uint ix;
+    Uint total_cost = 0, cost;
     hxnode_t *hxns;
     Eterm res;
 
@@ -669,7 +676,8 @@ Eterm erts_hashmap_from_array(ErtsHeapFactory* factory, Eterm *leafs, Uint n,
     hxns = (hxnode_t *)erts_alloc(ERTS_ALC_T_TMP, n * sizeof(hxnode_t));
 
     for (ix = 0; ix < n; ix++) {
-	hx  = hashmap_make_hash(*leafs);
+	hx  = hashmap_make_hash_cost(*leafs, &cost);
+	total_cost += cost;
 	sw = swizzle_map_hash(hx);
 	hxns[ix].hx   = sw;
 	hxns[ix].val  = make_list(leafs);
@@ -677,6 +685,7 @@ Eterm erts_hashmap_from_array(ErtsHeapFactory* factory, Eterm *leafs, Uint n,
 	hxns[ix].i    = ix;
 	leafs += 2;
     }
+    *cost_out = total_cost;
 
     res = hashmap_from_unsorted_array(factory, hxns, n, reject_dupkeys, ERTS_ALC_T_TMP);
 
@@ -724,18 +733,20 @@ erts_map_from_ks_and_vs(ErtsHeapFactory *factory, Eterm *ks, Eterm *vs, Uint n)
             return THE_NON_VALUE;
         }
     } else {
+        Uint unused_cost;
         return erts_hashmap_from_ks_and_vs_extra(factory, ks, vs, n,
                                                  THE_NON_VALUE, THE_NON_VALUE,
-                                                 1);
+                                                 1, &unused_cost);
     }
 }
 
 Eterm erts_hashmap_from_ks_and_vs_extra(ErtsHeapFactory *factory,
                                         Eterm *ks, Eterm *vs, Uint n,
                                         Eterm key, Eterm value,
-                                        int reject_dupkeys) {
+                                        int reject_dupkeys, Uint *cost_out) {
     erts_ihash_t sw, hx;
     Uint i,sz;
+    Uint total_cost = 0, cost;
     hxnode_t *hxns;
     Eterm *hp, res;
 
@@ -747,7 +758,8 @@ Eterm erts_hashmap_from_ks_and_vs_extra(ErtsHeapFactory *factory,
     hxns = (hxnode_t *)erts_alloc(ERTS_ALC_T_TMP, sz * sizeof(hxnode_t));
 
     for(i = 0; i < n; i++) {
-	hx = hashmap_make_hash(ks[i]);
+	hx = hashmap_make_hash_cost(ks[i], &cost);
+	total_cost += cost;
 	sw = swizzle_map_hash(hx);
 	hxns[i].hx   = sw;
 	hxns[i].val  = CONS(hp, ks[i], vs[i]); hp += 2;
@@ -756,13 +768,15 @@ Eterm erts_hashmap_from_ks_and_vs_extra(ErtsHeapFactory *factory,
     }
 
     if (key != THE_NON_VALUE) {
-	hx = hashmap_make_hash(key);
+	hx = hashmap_make_hash_cost(key, &cost);
+	total_cost += cost;
 	sw = swizzle_map_hash(hx);
 	hxns[i].hx   = sw;
 	hxns[i].val  = CONS(hp, key, value); hp += 2;
 	hxns[i].skip = 1;
 	hxns[i].i    = i;
     }
+    *cost_out = total_cost;
 
     res = hashmap_from_unsorted_array(factory, hxns, sz, reject_dupkeys,
                                       ERTS_ALC_T_TMP);
@@ -1201,7 +1215,7 @@ static int hxnodecmp(const void *va, const void *vb) {
 
 BIF_RETTYPE maps_is_key_2(BIF_ALIST_2) {
     if (is_map(BIF_ARG_2)) {
-	BIF_RET(erts_maps_get(BIF_ARG_1, BIF_ARG_2) ? am_true : am_false);
+	BIF_RET(erts_maps_get_p(BIF_P, BIF_ARG_1, BIF_ARG_2) ? am_true : am_false);
     }
     BIF_P->fvalue = BIF_ARG_2;
     BIF_ERROR(BIF_P, BADMAP);
@@ -1598,6 +1612,7 @@ static BIF_RETTYPE hashmap_merge(Process *p, Eterm map_A, Eterm map_B,
     Sint initial_reds = (Sint) (ERTS_BIF_REDS_LEFT(p) * MAP_MERGE_LOOP_FACTOR);
     Sint reds =  initial_reds;
     Uint coll_szA = 0, coll_szB = 0;
+    Uint hash_cost;
 
     /*
      * Strategy: Do depth-first traversal of both trees (at the same time)
@@ -1658,7 +1673,8 @@ recurse:
                 }
             }
             if (ctx->lvl < HAMT_MAX_LEVEL) {
-                hx = hashmap_restore_hash(ctx->lvl, keyA);
+                hx = hashmap_restore_hash_cost(ctx->lvl, keyA, &hash_cost);
+                erts_ihash_bump_reds(p, hash_cost);
                 sp->abm = 1 << hashmap_index(hx);
             }
             else {
@@ -1695,7 +1711,8 @@ recurse:
             Eterm keyB = CAR(list_val(sp->nodeB));
 
             if (ctx->lvl < HAMT_MAX_LEVEL) {
-                hx = hashmap_restore_hash(ctx->lvl, keyB);
+                hx = hashmap_restore_hash_cost(ctx->lvl, keyB, &hash_cost);
+                erts_ihash_bump_reds(p, hash_cost);
                 sp->bbm = 1 << hashmap_index(hx);
             }
             else {
@@ -1907,6 +1924,11 @@ static int hash_cmp(erts_ihash_t ha, erts_ihash_t hb)
     return 0;
 }
 
+/* Not doing hash key reduction accounting here, as it's too big a change for
+ * now (including modifying ENIF APi) to plumb through the processes for each
+ * hash to be able to bump their redunction counts. Therefore, we are still
+ * allowing arbitrarily large work to be done here calculating hash keys as a
+ * result which is invisible to scheduling logic. */
 int hashmap_key_hash_cmp(Eterm* ap, Eterm* bp)
 {
     if (ap && bp) {
@@ -2201,13 +2223,15 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
 
 	if (n >= MAP_SMALL_MAP_LIMIT) {
             ErtsHeapFactory factory;
+            Uint cost;
 	    HRelease(p, shp + MAP_HEADER_FLATMAP_SZ + n, shp);
 	    ks = flatmap_get_keys(mp);
 	    vs = flatmap_get_values(mp);
 
             erts_factory_proc_init(&factory, p);
-            res = erts_hashmap_from_ks_and_vs_extra(&factory,ks,vs,n,key,value,0);
+            res = erts_hashmap_from_ks_and_vs_extra(&factory,ks,vs,n,key,value,0,&cost);
             erts_factory_close(&factory);
+            erts_ihash_bump_reds(p, cost);
 
 	    return res;
 	}
@@ -2517,11 +2541,12 @@ erts_hashmap_get(erts_ihash_t hx, Eterm key, Eterm node)
 
 Eterm erts_hashmap_insert(Process *p, erts_ihash_t hx, Eterm key, Eterm value,
 			  Eterm map, int is_update) {
-    Uint size, upsz;
+    Uint size, upsz, hash_cost;
     Eterm *hp, res = THE_NON_VALUE;
     DECLARE_ESTACK(stack);
     if (erts_hashmap_insert_down(hx, key, value, map, &size, &upsz, &stack,
-                                 is_update)) {
+                                 is_update, &hash_cost)) {
+        erts_ihash_bump_reds(p, hash_cost);
         if (size) {
             /* We are putting a new value (under a new or existing key) */
 	    hp  = HAlloc(p, size);
@@ -2545,7 +2570,8 @@ Eterm erts_hashmap_insert(Process *p, erts_ihash_t hx, Eterm key, Eterm value,
 
 
 int erts_hashmap_insert_down(erts_ihash_t hx, Eterm key, Eterm value, Eterm node, Uint *sz,
-			     Uint *update_size, ErtsEStack *sp, int is_update) {
+			     Uint *update_size, ErtsEStack *sp, int is_update,
+			     Uint *hash_cost) {
     Eterm *ptr;
     Eterm hdr, ckey;
     Uint32 ix, cix, bp, hval;
@@ -2554,6 +2580,7 @@ int erts_hashmap_insert_down(erts_ihash_t hx, Eterm key, Eterm value, Eterm node
     erts_ihash_t chx;
 
     *update_size = 1;
+    *hash_cost = 0;
 
     for (;;) {
 	switch(primary_tag(node)) {
@@ -2674,7 +2701,7 @@ int erts_hashmap_insert_down(erts_ihash_t hx, Eterm key, Eterm value, Eterm node
 insert_subnodes:
     if (lvl < HAMT_MAX_LEVEL) {
         clvl  = lvl;
-        chx   = hashmap_restore_hash(clvl,ckey);
+        chx   = hashmap_restore_hash_cost(clvl, ckey, hash_cost);
         do {
             ix    = hashmap_index(hx);
             cix   = hashmap_index(chx);
@@ -3712,7 +3739,7 @@ BIF_RETTYPE erts_internal_map_next_3(BIF_ALIST_3) {
             Eterm *lst = list_val(path);
             Eterm key = CAR(lst);
             Eterm res = make_tuple(hp);
-            const Eterm *value = erts_maps_get(key, map);
+            const Eterm *value = erts_maps_get_p(BIF_P, key, map);
             if (!value) {
             ordered_badarg:
                 HRelease(BIF_P, hp_end, hp);

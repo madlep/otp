@@ -3227,6 +3227,40 @@ t_erts_internal_hash(_Config) when is_list(_Config) ->
 
     ok.
 
+%% Enough key/value pairs to force the `new_map` BEAM instruction (map
+%% literal construction) into its hashmap path (erts_gc_new_map /
+%% erts_hashmap_from_array), which requires more than
+%% 2*MAP_SMALL_MAP_LIMIT pairs.
+-define(T_REDS_MAP_LITERAL_PAIRS,
+        k1 => v1, k2 => v2, k3 => v3, k4 => v4, k5 => v5, k6 => v6, k7 => v7,
+        k8 => v8, k9 => v9, k10 => v10, k11 => v11, k12 => v12, k13 => v13,
+        k14 => v14, k15 => v15, k16 => v16, k17 => v17, k18 => v18,
+        k19 => v19, k20 => v20, k21 => v21, k22 => v22, k23 => v23,
+        k24 => v24, k25 => v25, k26 => v26, k27 => v27, k28 => v28,
+        k29 => v29, k30 => v30, k31 => v31, k32 => v32, k33 => v33,
+        k34 => v34, k35 => v35, k36 => v36, k37 => v37, k38 => v38,
+        k39 => v39, k40 => v40, k41 => v41, k42 => v42, k43 => v43,
+        k44 => v44, k45 => v45, k46 => v46, k47 => v47, k48 => v48,
+        k49 => v49, k50 => v50, k51 => v51, k52 => v52, k53 => v53,
+        k54 => v54, k55 => v55, k56 => v56, k57 => v57, k58 => v58,
+        k59 => v59, k60 => v60, k61 => v61, k62 => v62, k63 => v63,
+        k64 => v64, k65 => v65, k66 => v66, k67 => v67, k68 => v68,
+        k69 => v69, k70 => v70).
+
+%% Same idea, but for a *raw* ets match-spec term (bypassing ms_transform):
+%% the last value is bound to a match variable ('$2') so the match-spec
+%% compiler can't constant-fold the whole map and must emit the
+%% `matchMkHashMap` instruction (erts_hashmap_from_array) at match-run time.
+-define(T_REDS_MATCH_SPEC_PAIRS,
+        mk1 => 1, mk2 => 2, mk3 => 3, mk4 => 4, mk5 => 5, mk6 => 6, mk7 => 7,
+        mk8 => 8, mk9 => 9, mk10 => 10, mk11 => 11, mk12 => 12, mk13 => 13,
+        mk14 => 14, mk15 => 15, mk16 => 16, mk17 => 17, mk18 => 18,
+        mk19 => 19, mk20 => 20, mk21 => 21, mk22 => 22, mk23 => 23,
+        mk24 => 24, mk25 => 25, mk26 => 26, mk27 => 27, mk28 => 28,
+        mk29 => 29, mk30 => 30, mk31 => 31, mk32 => 32, mk33 => 33,
+        mk34 => 34, mk35 => 35, mk36 => 36, mk37 => 37, mk38 => 38,
+        mk39 => 39, mk40 => '$2').
+
 t_reds_large_key_hash(Config) when is_list(Config) ->
     %% big is much larger than small. We're not testing exact reduction counts
     %% here, just checking for regressions where reduction count doesn't get
@@ -3258,6 +3292,22 @@ t_reds_large_key_hash(Config) when is_list(Config) ->
     check_reds("#{M => K=>V}",
                fun() -> Base#{Small => v2} end,
                fun() -> Base#{Big => v2} end),
+
+    %% The check above updates an already-hashmap Base, exercising only
+    %% erts_gc_update_map_assoc's "already a hashmap" branch
+    %% (erts_hashmap_insert, fixed elsewhere). A single #{M => K1=>V1, ...}
+    %% instruction that pushes a *flatmap* over MAP_SMALL_MAP_LIMIT in one
+    %% shot takes a separate flatmap-to-hashmap growth branch
+    %% (erts_hashmap_from_ks_and_vs) that needs its own check.
+    FlatBase = maps:from_list([{K,v} || K <- lists:seq(1,20)]),
+    flatmap = erts_internal:term_type(FlatBase),
+    check_reds("#{FlatBase => many new keys} (flatmap->hashmap growth)",
+               fun() -> FlatBase#{k21=>v,k22=>v,k23=>v,k24=>v,k25=>v,k26=>v,
+                                  k27=>v,k28=>v,k29=>v,k30=>v,k31=>v,k32=>v,
+                                  k33=>v,k34=>v,Small=>extra} end,
+               fun() -> FlatBase#{k21=>v,k22=>v,k23=>v,k24=>v,k25=>v,k26=>v,
+                                  k27=>v,k28=>v,k29=>v,k30=>v,k31=>v,k32=>v,
+                                  k33=>v,k34=>v,Big=>extra} end),
 
     check_reds("maps:put/3",
                fun() -> maps:put(Small, v2, Base) end,
@@ -3312,6 +3362,202 @@ t_reds_large_key_hash(Config) when is_list(Config) ->
     check_reds("persistent_term:erase/1",
                fun() -> persistent_term:erase(Small) end,
                fun() -> persistent_term:erase(Big) end),
+
+    %% Map-literal construction with more than 2*MAP_SMALL_MAP_LIMIT pairs
+    %% goes through a different code path (the `new_map` BEAM instruction,
+    %% erts_gc_new_map/erts_hashmap_from_array) than the update instructions
+    %% (`#{M => K=>V}` etc.) checked above.
+    LitSmall = #{?T_REDS_MAP_LITERAL_PAIRS, Small => extra},
+    LitBig = #{?T_REDS_MAP_LITERAL_PAIRS, Big => extra},
+    hashmap = erts_internal:term_type(LitSmall),
+    hashmap = erts_internal:term_type(LitBig),
+    check_reds("#{K1=>V1, ..., K71=>V71} (>64 pairs, new_map instr)",
+               fun() -> #{?T_REDS_MAP_LITERAL_PAIRS, Small => extra} end,
+               fun() -> #{?T_REDS_MAP_LITERAL_PAIRS, Big => extra} end),
+
+    %% ets match-spec map construction (the `matchMkHashMap` instruction).
+    %% Functional check first: the match-spec body constructs and returns
+    %% the map, so we can verify it's a real, correctly-built hashmap.
+    MSTid = ets:new(reds_large_key_hash_ms, []),
+    ets:insert(MSTid, {k, v}),
+    MSSmallRet = [{{k,'$2'}, [], [#{?T_REDS_MATCH_SPEC_PAIRS, Small => extra}]}],
+    MSBigRet = [{{k,'$2'}, [], [#{?T_REDS_MATCH_SPEC_PAIRS, Big => extra}]}],
+    [MSSmallRes] = ets:select(MSTid, MSSmallRet),
+    [MSBigRes] = ets:select(MSTid, MSBigRet),
+    hashmap = erts_internal:term_type(MSSmallRes),
+    hashmap = erts_internal:term_type(MSBigRes),
+    %% Reduction check: constructs the SAME map but only inside a guard
+    %% (forcing matchMkHashMap to run) and returns just `true`, so nothing
+    %% large is copied back to the caller. This matters: if the map were
+    %% returned (as above), the reduction charge for copying a large result
+    %% back to the caller's heap would scale with key size on its own and
+    %% mask a regression of the *actual* hash-cost bump -- which is exactly
+    %% what happened here originally (see the c_p/build_proc note on
+    %% matchKey above, which affects this same construction).
+    MSSmall = [{{k,'$2'}, [{is_map, #{?T_REDS_MATCH_SPEC_PAIRS, Small => extra}}], [true]}],
+    MSBig = [{{k,'$2'}, [{is_map, #{?T_REDS_MATCH_SPEC_PAIRS, Big => extra}}], [true]}],
+    [true] = ets:select(MSTid, MSSmall),
+    [true] = ets:select(MSTid, MSBig),
+    check_reds("ets match-spec map construction (matchMkHashMap)",
+               fun() -> ets:select(MSTid, MSSmall) end,
+               fun() -> ets:select(MSTid, MSBig) end),
+    ets:delete(MSTid),
+
+    %% maps:from_list/1 and maps:from_keys/2 are backed by the YCF-transformed
+    %% hashmap_from_validated_list/4, a separate code path from the plain
+    %% maps:put/3-style operations checked above.
+    FromListBase = [{K,v} || K <- lists:seq(1,40)],
+    FromKeysBase = [K || {K,_} <- FromListBase],
+    check_reds("maps:from_list/1",
+               fun() -> maps:from_list([{Small,v}|FromListBase]) end,
+               fun() -> maps:from_list([{Big,v}|FromListBase]) end),
+    check_reds("maps:from_keys/2",
+               fun() -> maps:from_keys([Small|FromKeysBase], v) end,
+               fun() -> maps:from_keys([Big|FromKeysBase], v) end),
+
+    %% Genuine hashmap-hashmap maps:merge/2 (unlike the maps:merge/2 check
+    %% above, which merges a hashmap with a *single-key flatmap* and so only
+    %% exercises flatmap_merge/map_merge_mixed). This exercises
+    %% hashmap_merge's internal rehashing of already-hashed leaves
+    %% (hashmap_restore_hash) while walking both trees. Uses several
+    %% small/big keys on one side, since a single one isn't enough to
+    %% reliably clear the reduction-count threshold below.
+    MergeSmallKeys = [{{extra,N,Small}, v} || N <- lists:seq(1,20)],
+    MergeBigKeys = [{{extra,N,Big}, v} || N <- lists:seq(1,20)],
+    MergeOtherSmall = maps:from_list([{K,v} || K <- lists:seq(41,80)] ++ MergeSmallKeys),
+    MergeOtherBig = maps:from_list([{K,v} || K <- lists:seq(41,80)] ++ MergeBigKeys),
+    hashmap = erts_internal:term_type(MergeOtherSmall),
+    hashmap = erts_internal:term_type(MergeOtherBig),
+    check_reds("maps:merge/2 (hashmap+hashmap)",
+               fun() -> maps:merge(Base, MergeOtherSmall) end,
+               fun() -> maps:merge(Base, MergeOtherBig) end),
+
+    %% HAMT insert collision path: erts_hashmap_insert_down rehashes an
+    %% *already-resident* colliding key when a new key's traversal reaches an
+    %% occupied leaf, which is a normal (not rare) part of map growth. Insert
+    %% many new distinct keys into a hashmap that already holds several
+    %% large/small keys, so that with overwhelming probability at least one
+    %% insertion collides with (and therefore re-hashes) one of them.
+    InsertBaseSmall = maps:from_list([{K,v} || K <- lists:seq(1,40)] ++ MergeSmallKeys),
+    InsertBaseBig = maps:from_list([{K,v} || K <- lists:seq(1,40)] ++ MergeBigKeys),
+    hashmap = erts_internal:term_type(InsertBaseSmall),
+    hashmap = erts_internal:term_type(InsertBaseBig),
+    NewInsertKeys = lists:seq(1000000, 1000199),
+    check_reds("HAMT insert collision rehash (200 inserts)",
+               fun() -> lists:foldl(fun(K, M) -> M#{K => v2} end,
+                                    InsertBaseSmall, NewInsertKeys) end,
+               fun() -> lists:foldl(fun(K, M) -> M#{K => v2} end,
+                                    InsertBaseBig, NewInsertKeys) end),
+
+    %% erlang:phash/2 (make_hash_cost) has several independent cost-tracked
+    %% sub-paths for different term types; a binary only exercises one of
+    %% them (hash_binary_bytes), so also check a bignum (the BIG_DEF digit
+    %% loop) and a char list/string (the byte-list optimization loop).
+    check_reds("erlang:phash/2 (binary)",
+               fun() -> erlang:phash(Small, 1 bsl 32) end,
+               fun() -> erlang:phash(Big, 1 bsl 32) end),
+
+    SmallBig = 12345,
+    BigBig = binary:decode_unsigned(Big),
+    check_reds("erlang:phash/2 (bignum)",
+               fun() -> erlang:phash(SmallBig, 1 bsl 32) end,
+               fun() -> erlang:phash(BigBig, 1 bsl 32) end),
+
+    SmallList = "abcd",
+    BigList = lists:duplicate(1000000, $a),
+    check_reds("erlang:phash/2 (char list/string)",
+               fun() -> erlang:phash(SmallList, 1 bsl 32) end,
+               fun() -> erlang:phash(BigList, 1 bsl 32) end),
+
+    %% dict:store/3 hashes every key via erlang:phash/2
+    %% (lib/stdlib/src/dict.erl), so it benefits directly from the fix
+    %% above.
+    check_reds("dict:store/3",
+               fun() -> dict:store(Small, v, dict:new()) end,
+               fun() -> dict:store(Big, v, dict:new()) end),
+
+    check_reds("maps:is_key/2",
+               fun() -> maps:is_key(Small, SmallMap) end,
+               fun() -> maps:is_key(Big, BigMap) end),
+
+    %% A single next/1 call batches several keys, scaled by remaining
+    %% reductions, so drain the whole iterator and sum over the full pass.
+    DrainNext = fun Drain(none) -> ok;
+                    Drain(Iter) ->
+                        case maps:next(Iter) of
+                            none -> ok;
+                            {_K, _V, NextIter} -> Drain(NextIter)
+                        end
+                end,
+    check_reds("maps:next/1 (ordered iterator, full drain)",
+               fun() -> DrainNext(maps:iterator(SmallMap, ordered)) end,
+               fun() -> DrainNext(maps:iterator(BigMap, ordered)) end),
+
+    %% Raw match-spec map-pattern extraction (#{Key => '$N'} in the match
+    %% head), exercising the ets match-spec interpreter's matchKey opcode.
+    %% The matched map must itself be a genuine hashmap (>32 keys) or the
+    %% lookup takes the flatmap/EQ fast path and never hashes at all.
+    %%
+    %% Note: the reduction charge here must land on the *real* calling
+    %% process. Until the final `matchCatch` opcode, the match-spec
+    %% interpreter runs against a per-scheduler pseudo-process whose
+    %% reduction count is never read back into real scheduling -- charging
+    %% reductions to it before that point is a silent no-op. This check
+    %% exists specifically to catch a regression of that kind.
+    MKTid = ets:new(reds_large_key_hash_matchkey, []),
+    ets:insert(MKTid, {r1, Base#{Small => probe_value}}),
+    ets:insert(MKTid, {r2, Base#{Big => probe_value}}),
+    MKMSSmall = [{{'$1', #{Small => '$2'}}, [], [{{'$1','$2'}}]}],
+    MKMSBig   = [{{'$1', #{Big => '$2'}}, [], [{{'$1','$2'}}]}],
+    [{r1, probe_value}] = ets:select(MKTid, MKMSSmall),
+    [{r2, probe_value}] = ets:select(MKTid, MKMSBig),
+    check_reds("ets matchKey (map key extraction)",
+               fun() -> ets:select(MKTid, MKMSSmall) end,
+               fun() -> ets:select(MKTid, MKMSBig) end),
+    ets:delete(MKTid),
+
+    Tid2 = ets:new(reds_large_key_hash_member, []),
+    ets:insert(Tid2, {SmallMap, v}),
+    ets:insert(Tid2, {BigMap, v}),
+    check_reds("ets:member/2",
+               fun() -> ets:member(Tid2, SmallMap) end,
+               fun() -> ets:member(Tid2, BigMap) end),
+    check_reds("ets:delete_object/2",
+               fun() -> ets:delete_object(Tid2, {SmallMap, v}) end,
+               fun() -> ets:delete_object(Tid2, {BigMap, v}) end),
+    ets:insert(Tid2, {SmallMap, v}),
+    ets:insert(Tid2, {BigMap, v}),
+    check_reds("ets:delete/2",
+               fun() -> ets:delete(Tid2, SmallMap) end,
+               fun() -> ets:delete(Tid2, BigMap) end),
+    ets:delete(Tid2),
+
+    %% ets:select/2's fully-bound-key fast path (analyze_pattern). The key
+    %% itself must NOT contain a map -- db_is_fully_bound() always treats a
+    %% map as "variable" (subset matching) and disables this optimization
+    %% -- so use the binaries directly as the table key.
+    Tid3 = ets:new(reds_large_key_hash_select, []),
+    ets:insert(Tid3, {Small, v}),
+    ets:insert(Tid3, {Big, v}),
+    check_reds("ets:select/2 (fully bound key)",
+               fun() -> ets:select(Tid3, [{{Small, '$1'}, [], ['$1']}]) end,
+               fun() -> ets:select(Tid3, [{{Big, '$1'}, [], ['$1']}]) end),
+    ets:delete(Tid3),
+
+    %% ets:insert_new/2 given a LIST checks membership for every key first
+    %% (ets_insert_new_2_list_has_member, a YCF-transformed function),
+    %% before inserting anything -- a separate code path from the plain
+    %% ets:member/2 checked above, using a consumed_reds accumulator fed
+    %% into YCF_CONSUME_REDS instead of a direct BUMP_REDS.
+    Tid4Small = ets:new(reds_large_key_hash_insert_new_s, []),
+    Tid4Big = ets:new(reds_large_key_hash_insert_new_b, []),
+    InsertNewSmallItems = [{K,v} || K <- lists:seq(1,50)] ++ [{Small, v}],
+    InsertNewBigItems = [{K,v} || K <- lists:seq(1,50)] ++ [{Big, v}],
+    check_reds("ets:insert_new/2 (list arg, membership pre-check)",
+               fun() -> true = ets:insert_new(Tid4Small, InsertNewSmallItems) end,
+               fun() -> true = ets:insert_new(Tid4Big, InsertNewBigItems) end),
+    ets:delete(Tid4Small),
+    ets:delete(Tid4Big),
 
     ok.
 

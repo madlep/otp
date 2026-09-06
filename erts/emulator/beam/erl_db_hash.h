@@ -121,7 +121,7 @@ int db_put_hash(DbTable *tbl, Eterm obj, bool key_clash_fail, SWord* consumed_re
 
 int db_get_hash(Process *p, DbTable *tbl, Eterm key, Eterm *ret);
 
-int db_erase_hash(DbTable *tbl, Eterm key, Eterm *ret);
+int db_erase_hash(Process *p, DbTable *tbl, Eterm key, Eterm *ret);
 
 typedef struct {
     float avg_chain_len;
